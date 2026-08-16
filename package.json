@@ -1,0 +1,41 @@
+{
+  "name": "@kud/webext",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Typed settings and plumbing for Firefox WebExtensions",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.global.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "homepage": "https://kud.io/projects/webext",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kud/webext.git"
+  },
+  "author": "kud",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "tsup": "8.5.1",
+    "typescript": "5.9.3",
+    "vitest": "4.1.10"
+  }
+}
