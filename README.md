@@ -29,8 +29,18 @@ following script relies on:
 ```
 
 `webext.defineSettings(...)` is then available as a global inside
-`src/content.js`. For options or popup pages loaded with
-`<script type="module">`, import the ESM build (`dist/index.js`) instead.
+`src/content.js`.
+
+Do the same for popup and options pages — three plain `<script>` tags rather
+than one `<script type="module">`. A module gets its own scope and cannot see
+the vendored global, so it needs its own copy of the schema, and a second copy
+of the schema is the thing this library exists to delete:
+
+```html
+<script src="vendor/webext.js"></script>
+<script src="settings.js"></script>
+<script src="popup.js"></script>
+```
 
 This costs something and it isn't hidden here: you commit a vendored file,
 and you re-copy it by hand every time the library changes. That's the price
@@ -39,24 +49,25 @@ runtime — just a file you copy in and keep in sync yourself.
 
 ## Usage
 
-Declare the schema once, in a shared module:
+Declare the schema once, in a classic script every context loads:
 
 ```js
 // src/settings.js
-import { defineSettings } from "./vendor/webext.js" // or "@kud/webext" from an ESM context
-
-export const settings = defineSettings(
+const settings = webext.defineSettings(
   { enabled: true, threshold: 30 },
   { area: "sync" },
 )
 ```
 
+A top-level `const` in a classic script lands in the shared global lexical
+scope, so `settings` is in scope for every later script in that context — the
+popup, the options page, the background page, and the content script — without
+an `import` anywhere.
+
 Read it from a popup:
 
 ```js
 // src/popup.js
-import { settings } from "./settings.js"
-
 const values = await settings.get()
 document.querySelector("#enabled").checked = values.enabled
 ```
@@ -65,11 +76,18 @@ Subscribe to changes from a content script:
 
 ```js
 // src/content.js
-const { settings } = webext // global, vendored build
-
 settings.onChange((values, changed) => {
   if ("enabled" in changed) toggleFeature(values.enabled)
 })
+```
+
+The one thing `settings` does not hand back is the defaults object itself. If a
+context needs them synchronously — before the first `get()` resolves — name it
+in `settings.js` and pass it in, so it is still declared once:
+
+```js
+const DEFAULTS = { enabled: true, threshold: 30 }
+const settings = webext.defineSettings(DEFAULTS, { area: "sync" })
 ```
 
 `defineSettings` also throws on `set()` calls with an undeclared key, so a
