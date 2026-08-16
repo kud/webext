@@ -20,4 +20,8 @@ jobs:
       - run: npm install -g npm@latest
       - run: npm ci
       - run: npm run build
-      - run: npm publish --access public
+      # --provenance is the point of publishing via OIDC rather than a token: it
+      # links the tarball back to the exact commit and workflow run that built
+      # it, and shows as a verified-build badge on npm. Without it the job does
+      # the OIDC dance and collects none of the benefit.
+      - run: npm publish --provenance --access public
