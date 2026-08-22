@@ -173,3 +173,39 @@ describe("chrome-only global", () => {
     })
   })
 })
+
+// `defaults` exists so a caller needing a value before the first `get()` resolves
+// — a content script rendering on load, a `catch` picking a fallback — reads it
+// from the schema rather than restating the literal.
+describe("exposed defaults", () => {
+  it("exposes the declared defaults synchronously", () => {
+    withBrowser()
+    const settings = defineSettings({ enabled: true, threshold: 30 })
+
+    expect(settings.defaults).toEqual({ enabled: true, threshold: 30 })
+  })
+
+  it("serves as the fallback when storage rejects", async () => {
+    const fake = withBrowser()
+    fake.storage.local.get.mockImplementationOnce(() =>
+      Promise.reject(new Error("storage unavailable")),
+    )
+    const settings = defineSettings({ enabled: true })
+
+    const values = await settings.get().catch(() => settings.defaults)
+
+    expect(values.enabled).toBe(true)
+  })
+
+  it("freezes nested defaults, not just the top level", () => {
+    withBrowser()
+    const settings = defineSettings({ nested: { deep: 1 }, list: [1, 2] })
+
+    expect(() => {
+      ;(settings.defaults.nested as { deep: number }).deep = 2
+    }).toThrow()
+    expect(() => {
+      ;(settings.defaults.list as number[]).push(3)
+    }).toThrow()
+  })
+})

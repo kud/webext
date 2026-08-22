@@ -1,6 +1,6 @@
 {
   "name": "@kud/webext",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "Typed settings and plumbing for Firefox WebExtensions",
   "exports": {

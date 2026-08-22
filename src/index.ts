@@ -1,4 +1,4 @@
-export { api } from "./api.js"
+export { api, invoke } from "./api.js"
 export type { WebExtApi } from "./api.js"
 
 export { defineSettings } from "./settings.js"

@@ -81,18 +81,60 @@ settings.onChange((values, changed) => {
 })
 ```
 
-The one thing `settings` does not hand back is the defaults object itself. If a
-context needs them synchronously — before the first `get()` resolves — name it
-in `settings.js` and pass it in, so it is still declared once:
+Where a context needs a value _before_ the first `get()` resolves — a content
+script rendering on load — read `settings.defaults`:
 
 ```js
-const DEFAULTS = { enabled: true, threshold: 30 }
-const settings = webext.defineSettings(DEFAULTS, { area: "sync" })
+// src/content.js
+let values = settings.defaults
+settings.get().then((stored) => (values = stored))
 ```
+
+It is deep-frozen, so a nested default cannot be mutated into something every
+later `get()` silently merges over.
 
 `defineSettings` also throws on `set()` calls with an undeclared key, so a
 typo in a plain-JS content script fails loudly instead of silently writing
 under a name nothing reads.
+
+### When `get()` rejects
+
+It does not swallow storage failures, and that is deliberate — the failure is
+almost never transient. In Firefox the usual cause is `storage.sync` throwing
+because the manifest has no `browser_specific_settings.gecko.id`; **check that
+first**. Resolving defaults instead would leave the extension running on
+defaults forever while the user's saved settings appear to be ignored, with
+nothing anywhere to point at the cause.
+
+Where a caller genuinely wants to carry on, the defaults are one expression
+away — and reading them from the schema is the point, rather than restating
+the literal in a `catch`:
+
+```js
+const values = await settings.get().catch(() => settings.defaults)
+```
+
+## `invoke` — for APIs this library does not wrap
+
+`invoke(namespace, method, ...args)` is the promise/callback adapter the rest
+of the library is built on, exported so an API with no wrapper here does not
+need a hand-rolled Chrome-MV2 branch at the call site:
+
+```js
+const [tab] = await webext.invoke(webext.api.tabs, "query", {
+  active: true,
+  currentWindow: true,
+})
+```
+
+It passes a callback _and_ honours a returned thenable, so it is correct under
+Firefox, Chrome MV3 and Chrome MV2 alike, and it checks `runtime.lastError` —
+which a hand-rolled `new Promise((resolve) => chrome.tabs.query(q, resolve))`
+does not, silently resolving `undefined` on failure.
+
+⚠ It is for **callback-or-promise async** APIs, not a universal wrapper. It
+appends a callback argument to every call, so a synchronous API
+(`i18n.getMessage`) would receive an argument it does not expect.
 
 ## Development
 

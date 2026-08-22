@@ -15,6 +15,14 @@ export type SettingsSchema = Record<string, SettingsValue>
 export type SettingsChangeListener<T> = (values: T, changed: Partial<T>) => void
 
 export type Settings<T> = {
+  /**
+   * The declared defaults, deep-frozen. Exposed because a caller that needs a
+   * value before the first `get()` resolves — a content script rendering on load,
+   * a `catch` choosing what to fall back to — otherwise restates the literal, and
+   * a restated default is the drift this library exists to delete. A sibling
+   * `const` travels with the scope; this travels with the object.
+   */
+  defaults: Readonly<T>
   get: () => Promise<T>
   set: (patch: Partial<T>) => Promise<void>
   onChange: (listener: SettingsChangeListener<T>) => () => void
@@ -50,6 +58,18 @@ type Widen<V> = V extends boolean
 type WidenSchema<T> = { [K in keyof T]: Widen<T[K]> }
 
 /**
+ * `Object.freeze` is shallow, and `SettingsValue` permits nested objects and
+ * arrays. A mutated nested default silently changes what every later `get()`
+ * merges over, with no error anywhere — so freeze all the way down.
+ */
+const deepFreeze = <V>(value: V): V => {
+  if (!value || typeof value !== "object" || Object.isFrozen(value))
+    return value
+  Object.values(value).forEach(deepFreeze)
+  return Object.freeze(value)
+}
+
+/**
  * Every extension audited re-derived its defaults at each read site — `x !== false`,
  * `x || FALLBACK`, `Boolean(x)` — because `storage.get` omits absent keys. Three of
  * those idioms cannot express a default of `false`, and restating them per site is
@@ -61,6 +81,10 @@ export const defineSettings = <T extends SettingsSchema>(
   options: DefineSettingsOptions = {},
 ): Settings<WidenSchema<T>> => {
   const area = options.area ?? "sync"
+  // Frozen in place, not as a copy: `get` and `onChange` below both read this
+  // object, and a frozen copy sitting beside a mutable original is two facts
+  // where the point is to have one.
+  deepFreeze(defaults)
   const keys = Object.keys(defaults)
   const store = () => api.storage[area]
 
@@ -106,5 +130,5 @@ export const defineSettings = <T extends SettingsSchema>(
     return () => api.storage.onChanged.removeListener(handler)
   }
 
-  return { get, set, onChange } as Settings<WidenSchema<T>>
+  return { defaults, get, set, onChange } as Settings<WidenSchema<T>>
 }
