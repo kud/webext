@@ -70,7 +70,8 @@ jobs:
         with:
           node-version: ${{ inputs.node-version }}
           cache: npm
-          cache-dependency-path: ${{ inputs.root }}/package-lock.json
+          # An npm workspace keeps its lockfile at the repository root.
+          cache-dependency-path: ${{ hashFiles(format('{0}/package-lock.json', inputs.root)) != '' && format('{0}/package-lock.json', inputs.root) || 'package-lock.json' }}
 
       - name: Detect the build mode
         id: mode
