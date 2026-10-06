@@ -1,0 +1,175 @@
+name: Release extension
+
+# Reusable: builds, signs and uploads the listed AMO version, attaches the
+# artefacts to the GitHub release, then applies the AMO listing. The version is
+# the caller's business (git lzv, a repo script); nothing is bumped here.
+#
+# Secrets come from the caller via `secrets: inherit`. WEB_EXT_API_KEY and
+# WEB_EXT_API_SECRET are used when present, MOZILLA_ADDONS_JWT_ISSUER and
+# MOZILLA_ADDONS_JWT_SECRET otherwise. The caller grants `contents: write`.
+
+on:
+  workflow_call:
+    inputs:
+      root:
+        description: "Extension directory, relative to the repository root"
+        type: string
+        default: "."
+      node-version:
+        type: string
+        default: "24"
+      mode:
+        description: "auto, wxt or web-ext. auto picks wxt when wxt is a dependency"
+        type: string
+        default: "auto"
+      source-dir:
+        description: "web-ext mode only: directory to sign, relative to root"
+        type: string
+        default: "."
+      ignore-files:
+        description: "web-ext mode only: space-separated globs left out of the package"
+        type: string
+        default: ""
+      amo-metadata:
+        description: "Optional AMO metadata JSON (release notes), relative to root"
+        type: string
+        default: ""
+      listing:
+        description: "Apply <root>/amo after signing, when <root>/amo/listing.json exists"
+        type: boolean
+        default: true
+      icon:
+        description: "128x128 icon PNG for the listing, relative to the repository root"
+        type: string
+        default: ""
+    secrets:
+      WEB_EXT_API_KEY:
+        required: false
+      WEB_EXT_API_SECRET:
+        required: false
+      MOZILLA_ADDONS_JWT_ISSUER:
+        required: false
+      MOZILLA_ADDONS_JWT_SECRET:
+        required: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      guid: ${{ steps.guid.outputs.guid }}
+      has-listing: ${{ steps.listing.outputs.present }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.root }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+          cache-dependency-path: ${{ inputs.root }}/package-lock.json
+
+      - name: Detect the build mode
+        id: mode
+        env:
+          MODE: ${{ inputs.mode }}
+        run: |
+          if [ "$MODE" = "auto" ]; then
+            MODE=$(node -e '
+              const p = require("./package.json")
+              const deps = { ...p.dependencies, ...p.devDependencies }
+              process.stdout.write("wxt" in deps ? "wxt" : "web-ext")
+            ')
+          fi
+          case "$MODE" in
+            wxt | web-ext) ;;
+            *) echo "::error::unknown mode '$MODE'"; exit 1 ;;
+          esac
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+
+      - run: npm ci
+
+      - name: Build and zip
+        if: steps.mode.outputs.mode == 'wxt'
+        run: npx wxt zip -b firefox
+
+      - name: Read the add-on id
+        id: guid
+        env:
+          MODE: ${{ steps.mode.outputs.mode }}
+          SOURCE_DIR: ${{ inputs.source-dir }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          if [ "$MODE" = "wxt" ]; then
+            built=(.output/firefox-mv*/manifest.json)
+            [ "${#built[@]}" -eq 1 ] || { echo "::error::expected one .output/firefox-mv*/manifest.json"; exit 1; }
+            manifest="${built[0]}"
+          else
+            manifest="$SOURCE_DIR/manifest.json"
+          fi
+          GUID=$(node -e '
+            const m = require(require("path").resolve(process.argv[1]))
+            const s = m.browser_specific_settings ?? m.applications ?? {}
+            process.stdout.write(s.gecko?.id ?? "")
+          ' "$manifest")
+          [ -n "$GUID" ] || { echo "::error::no gecko.id in $manifest"; exit 1; }
+          echo "guid=$GUID" >> "$GITHUB_OUTPUT"
+
+      - name: Sign and upload the listed AMO version
+        env:
+          WEB_EXT_API_KEY: ${{ secrets.WEB_EXT_API_KEY || secrets.MOZILLA_ADDONS_JWT_ISSUER }}
+          WEB_EXT_API_SECRET: ${{ secrets.WEB_EXT_API_SECRET || secrets.MOZILLA_ADDONS_JWT_SECRET }}
+          MODE: ${{ steps.mode.outputs.mode }}
+          SOURCE_DIR: ${{ inputs.source-dir }}
+          IGNORE_FILES: ${{ inputs.ignore-files }}
+          AMO_METADATA: ${{ inputs.amo-metadata }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          args=(sign --channel listed --artifacts-dir web-ext-artifacts)
+          if [ "$MODE" = "wxt" ]; then
+            sources=(.output/*-sources.zip)
+            [ "${#sources[@]}" -eq 1 ] || { echo "::error::expected one sources zip in .output"; exit 1; }
+            built=(.output/firefox-mv*/)
+            [ "${#built[@]}" -eq 1 ] || { echo "::error::expected one .output/firefox-mv* build"; exit 1; }
+            args+=(--source-dir "${built[0]}" --upload-source-code "${sources[0]}")
+          else
+            args+=(--source-dir "$SOURCE_DIR")
+            set -f
+            for pattern in $IGNORE_FILES; do args+=(--ignore-files "$pattern"); done
+            set +f
+          fi
+          [ -n "$AMO_METADATA" ] && args+=(--amo-metadata "$AMO_METADATA")
+          npx -y web-ext "${args[@]}"
+
+      - name: Attach artefacts to the GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            ${{ inputs.root }}/web-ext-artifacts/*.xpi
+            ${{ inputs.root }}/.output/*.zip
+
+      - name: Look for an AMO listing
+        id: listing
+        run: |
+          if [ -f amo/listing.json ]; then echo "present=true" >> "$GITHUB_OUTPUT"; else echo "present=false" >> "$GITHUB_OUTPUT"; fi
+
+  amo-listing:
+    needs: release
+    if: ${{ inputs.listing && needs.release.outputs.has-listing == 'true' }}
+    permissions:
+      contents: write
+    uses: kud/webext/.github/workflows/amo-listing.yml@main
+    with:
+      root: ${{ inputs.root }}
+      apply: true
+      guid: ${{ needs.release.outputs.guid }}
+      icon: ${{ inputs.icon }}
+      node-version: ${{ inputs.node-version }}
+    secrets: inherit

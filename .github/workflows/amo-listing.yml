@@ -1,0 +1,119 @@
+name: AMO listing
+
+# Reusable: pushes <root>/amo/listing.json, the icon and <root>/amo/screenshots
+# to addons.mozilla.org. Without `apply` it is a dry run and the diff lands in
+# the job summary. Call it from a workflow that grants `contents: write`.
+
+on:
+  workflow_call:
+    inputs:
+      root:
+        description: "Extension directory, relative to the repository root"
+        type: string
+        default: "."
+      apply:
+        description: "Send the changes to AMO (off runs a dry run)"
+        type: boolean
+        default: false
+      force:
+        description: "Replace every screenshot, even ones that look in sync. Honoured on workflow_dispatch only, never on a tag"
+        type: boolean
+        default: false
+      guid:
+        description: "Add-on id; read from <root>/manifest.json when empty"
+        type: string
+        default: ""
+      icon:
+        description: "128x128 icon PNG, relative to the repository root; skipped when empty"
+        type: string
+        default: ""
+      node-version:
+        type: string
+        default: "24"
+    secrets:
+      WEB_EXT_API_KEY:
+        required: false
+      WEB_EXT_API_SECRET:
+        required: false
+      MOZILLA_ADDONS_JWT_ISSUER:
+        required: false
+      MOZILLA_ADDONS_JWT_SECRET:
+        required: false
+
+jobs:
+  amo-listing:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: amo-listing-${{ github.repository }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    env:
+      ROOT: ${{ inputs.root }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - name: Push the listing
+        env:
+          WEB_EXT_API_KEY: ${{ secrets.WEB_EXT_API_KEY || secrets.MOZILLA_ADDONS_JWT_ISSUER }}
+          WEB_EXT_API_SECRET: ${{ secrets.WEB_EXT_API_SECRET || secrets.MOZILLA_ADDONS_JWT_SECRET }}
+          GUID: ${{ inputs.guid }}
+          ICON: ${{ inputs.icon }}
+          APPLY: ${{ inputs.apply }}
+          FORCE_PREVIEWS: ${{ inputs.force && github.event_name == 'workflow_dispatch' && !startsWith(github.ref, 'refs/tags/') }}
+        run: |
+          set -euo pipefail
+          if [ -z "$GUID" ]; then
+            GUID=$(node -e '
+              const m = require(require("path").resolve(process.env.ROOT, "manifest.json"))
+              const s = m.browser_specific_settings ?? m.applications ?? {}
+              process.stdout.write(s.gecko?.id ?? "")
+            ')
+          fi
+          if [ -z "$GUID" ]; then
+            echo "::error::no add-on id: pass the guid input or declare gecko.id in $ROOT/manifest.json"
+            exit 1
+          fi
+
+          args=(listing push
+            --listing "$ROOT/amo/listing.json"
+            --guid "$GUID"
+            --screenshots "$ROOT/amo/screenshots")
+          [ -n "$ICON" ] && args+=(--icon "$ICON")
+          [ "$APPLY" = "true" ] && args+=(--apply)
+          [ "$FORCE_PREVIEWS" = "true" ] && args+=(--force)
+
+          npx -y @kud/amo-cli@0.1.1 "${args[@]}" 2>&1 | tee amo-listing.log
+
+          if [ "$APPLY" != "true" ]; then
+            {
+              echo "### AMO listing dry run"
+              echo
+              echo '```'
+              cat amo-listing.log
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # A tag checkout is a detached HEAD, so the state is committed onto the
+      # tip of the default branch rather than onto whatever was checked out.
+      - name: Record the AMO preview state
+        if: ${{ inputs.apply }}
+        env:
+          BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          state="$ROOT/amo/screenshots/.amo-previews.json"
+          [ -f "$state" ] || exit 0
+          cp "$state" "$RUNNER_TEMP/amo-previews.json"
+          git fetch --depth 1 origin "$BRANCH"
+          git checkout --force -B "$BRANCH" FETCH_HEAD
+          cp "$RUNNER_TEMP/amo-previews.json" "$state"
+          git add "$state"
+          git diff --cached --quiet && exit 0
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit --message "chore(amo): record preview state [skip ci]"
+          git pull --rebase --quiet origin "$BRANCH"
+          git push origin "HEAD:$BRANCH"
