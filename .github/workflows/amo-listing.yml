@@ -82,7 +82,8 @@ jobs:
             --listing "$ROOT/amo/listing.json"
             --guid "$GUID"
             --screenshots "$ROOT/amo/screenshots")
-          [ -n "$ICON" ] && args+=(--icon "$ICON")
+          # amo-cli refuses its icon scope without an icon, so it is left out.
+          if [ -n "$ICON" ]; then args+=(--icon "$ICON"); else args+=(--only=listing,previews); fi
           [ "$APPLY" = "true" ] && args+=(--apply)
           [ "$FORCE_PREVIEWS" = "true" ] && args+=(--force)
 
