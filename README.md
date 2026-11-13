@@ -1,8 +1,37 @@
-# webext
+<div align="center">
 
-Typed settings and plumbing for Firefox WebExtensions.
+<img src="assets/icon.svg" width="128" alt="Webext icon" />
 
-## Consuming this without a build step
+🧩
+
+# Webext
+
+![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white)
+![Firefox](https://img.shields.io/badge/Firefox-FF7139?style=flat-square&logo=firefoxbrowser&logoColor=white)
+![npm](https://img.shields.io/npm/v/%40kud%2Fwebext?style=flat-square&color=CB3837)
+![MIT](https://img.shields.io/badge/licence-MIT-22C55E?style=flat-square)
+
+**Typed settings and plumbing for Firefox WebExtensions**
+
+<a href="https://kud.io/projects/webext">Website</a> · <a href="https://kud.io/projects/webext/docs">Documentation</a>
+
+</div>
+
+## Features
+
+- **One settings schema** — `defineSettings` declares defaults once, shared by the popup, options page, background page and content script
+- **Loud on typos** — `set()` with an undeclared key throws instead of writing under a name nothing reads
+- **No build step needed** — an IIFE build you vendor straight into a no-bundler extension
+- **`invoke`** — one promise/callback adapter that is correct under Firefox, Chrome MV3 and Chrome MV2, and checks `runtime.lastError`
+- **Reusable release workflows** — build, sign, upload and list any Firefox extension on AMO without copying the workflows
+
+## Install
+
+```sh
+npm install @kud/webext
+```
+
+### Consuming this without a build step
 
 The extensions this library is built for have no bundler — `web-ext build`
 just zips the source directory as-is. So there is no `import "@kud/webext"`
@@ -136,15 +165,6 @@ does not, silently resolving `undefined` on failure.
 appends a callback argument to every call, so a synchronous API
 (`i18n.getMessage`) would receive an argument it does not expect.
 
-## Development
-
-```sh
-npm install
-npm run build      # emits dist/index.js (ESM) and dist/index.global.js (IIFE)
-npm run typecheck
-npm test
-```
-
 ## Releasing an extension
 
 Two reusable workflows in `.github/workflows` release any Firefox extension
@@ -201,3 +221,16 @@ jobs:
       icon: assets/icon-128.png
     secrets: inherit
 ```
+
+## Development
+
+```sh
+git clone https://github.com/kud/webext.git
+cd webext
+npm install
+npm run build      # emits dist/index.js (ESM) and dist/index.global.js (IIFE)
+npm run typecheck
+npm test
+```
+
+📚 **Full documentation → [webext/docs](https://kud.io/projects/webext/docs)**
