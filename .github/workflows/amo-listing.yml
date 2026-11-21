@@ -29,7 +29,7 @@ on:
         default: ""
       node-version:
         type: string
-        default: "24"
+        default: "lts/*"
     secrets:
       WEB_EXT_API_KEY:
         required: false
@@ -51,8 +51,8 @@ jobs:
     env:
       ROOT: ${{ inputs.root }}
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ inputs.node-version }}
 

@@ -17,7 +17,7 @@ on:
         default: "."
       node-version:
         type: string
-        default: "24"
+        default: "lts/*"
       mode:
         description: "auto, wxt or web-ext. auto picks wxt when wxt is a dependency"
         type: string
@@ -64,9 +64,9 @@ jobs:
       run:
         working-directory: ${{ inputs.root }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ inputs.node-version }}
           cache: npm
