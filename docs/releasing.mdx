@@ -7,22 +7,33 @@ Two reusable workflows in this repo's `.github/workflows` release any Firefox ex
 
 ## release-extension.yml
 
-Builds the extension (WXT, or plain web-ext, detected from `package.json`), signs and uploads the listed AMO version, attaches the artefacts to the GitHub release, then applies the AMO listing. It is tag-triggered:
+Builds the extension (WXT, or plain web-ext, detected from `package.json`), signs and uploads the listed AMO version, attaches the artefacts to the GitHub release, then applies the AMO listing. It is run by hand, from main:
 
 ```yaml
 # .github/workflows/release.yml
 on:
-  push:
-    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, as committed in package.json"
+        required: true
+        type: string
+concurrency:
+  group: release
+  cancel-in-progress: false
 permissions:
   contents: write
 jobs:
   release:
     uses: kud/webext/.github/workflows/release-extension.yml@main
+    with:
+      version: ${{ inputs.version }}
     secrets: inherit
 ```
 
-Inputs: `root` (default `.`), `node-version`, `mode` (`auto`, `wxt` or `web-ext`), `source-dir` and `ignore-files` (web-ext mode only), `amo-metadata`, `listing` and `icon`.
+Commit the version bump to main without a tag, then run the workflow from main with that version. It refuses another branch, a version that is not the manifest's, and a tag that already exists; it tags `<tag-prefix><version>` (default `v`) with the workflow's own token only once the upload has succeeded. A bump tool that also tags (`git lzv`) makes the dispatch refuse, so push the bump alone. A `push: tags` caller still works, and is not tagged again; it is the legacy path until every extension has moved.
+
+Inputs: `root` (default `.`), `node-version`, `mode` (`auto`, `wxt` or `web-ext`), `source-dir` and `ignore-files` (web-ext mode only), `amo-metadata`, `listing`, `icon`, `version` (required on a dispatch) and `tag-prefix` (default `v`).
 
 The caller needs the `WEB_EXT_API_KEY` and `WEB_EXT_API_SECRET` secrets, or `MOZILLA_ADDONS_JWT_ISSUER` and `MOZILLA_ADDONS_JWT_SECRET` as a fallback, plus `contents: write`.
 

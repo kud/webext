@@ -173,24 +173,40 @@ repo script); the workflows never bump anything.
 
 `release-extension.yml` builds (WXT, or plain web-ext, detected from
 `package.json`), signs and uploads the listed AMO version, attaches the
-artefacts to the GitHub release, then applies the AMO listing. Tag-triggered:
+artefacts to the GitHub release, then applies the AMO listing. Run by hand,
+from main:
 
 ```yaml
 # .github/workflows/release.yml
 on:
-  push:
-    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, as committed in package.json"
+        required: true
+        type: string
+concurrency:
+  group: release
+  cancel-in-progress: false
 permissions:
   contents: write
 jobs:
   release:
     uses: kud/webext/.github/workflows/release-extension.yml@main
+    with:
+      version: ${{ inputs.version }}
     secrets: inherit
 ```
 
+Commit the version bump to main without a tag, then run it with that version.
+It refuses another branch, a version that is not the manifest's and an existing
+tag, and tags `<tag-prefix><version>` itself once the upload has succeeded. A
+bump tool that also tags (`git lzv`) makes it refuse, so push the bump alone.
+A `push: tags` caller still works and is not tagged again.
+
 Inputs: `root` (default `.`), `node-version`, `mode` (`auto`, `wxt`, `web-ext`),
 `source-dir` and `ignore-files` (web-ext mode), `amo-metadata`, `listing`,
-`icon`. The caller needs `WEB_EXT_API_KEY` and `WEB_EXT_API_SECRET` secrets,
+`icon`, `version` (required on a dispatch), `tag-prefix` (default `v`). The caller needs `WEB_EXT_API_KEY` and `WEB_EXT_API_SECRET` secrets,
 or `MOZILLA_ADDONS_JWT_ISSUER` and `MOZILLA_ADDONS_JWT_SECRET` as a fallback.
 
 `amo-listing.yml` pushes `<root>/amo/listing.json`, the icon and
