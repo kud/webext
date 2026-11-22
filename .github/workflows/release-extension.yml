@@ -7,8 +7,9 @@ name: Release extension
 # Two ways in, decided by the caller's event:
 # - workflow_dispatch (preferred): run on main with `version` set to the
 #   version already committed in the manifest. It refuses another branch, a
-#   mismatched version or an existing tag, signs, and only then tags the commit
-#   with the workflow's own token, so a failed upload leaves nothing behind.
+#   mismatched version or a tag on another commit, signs, and only then tags
+#   the commit with the workflow's own token (unless that tag already points
+#   at it), so a failed upload leaves nothing behind.
 # - a pushed `<tag-prefix>*` tag (legacy, kept for callers not yet moved): the
 #   tag is already there, so nothing is tagged.
 #
@@ -177,13 +178,22 @@ jobs:
           ' "$MANIFEST")
           [ "$manifest_version" = "$VERSION" ] || { echo "::error::$MANIFEST is at '$manifest_version', not $VERSION. Commit the bump to main first."; exit 1; }
           tag="$PREFIX$VERSION"
-          # The checkout is shallow and carries no tags: ask the remote.
-          if [ -n "$(git ls-remote --tags origin "refs/tags/$tag")" ]; then
-            echo "::error::$tag already exists. Bump the version first."
+          # The checkout is shallow and carries no tags: ask the remote. An
+          # annotated tag lists its commit on the peeled ^{} line.
+          refs=$(git ls-remote origin "refs/tags/$tag" "refs/tags/$tag^{}")
+          tagged=$(printf '%s\n' "$refs" | awk '$2 ~ /\^\{\}$/ {print $1}')
+          [ -n "$tagged" ] || tagged=$(printf '%s\n' "$refs" | awk 'NF {print $1; exit}')
+          if [ -z "$tagged" ]; then
+            echo "create=true" >> "$GITHUB_OUTPUT"
+          elif [ "$tagged" = "$GITHUB_SHA" ]; then
+            # A bump tool that tags as it pushes (git lzv) already made it.
+            echo "$tag already points at $GITHUB_SHA; releasing it as is."
+            echo "create=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::$tag points at $tagged, not the commit being released ($GITHUB_SHA). Bump the version first."
             exit 1
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "create=true" >> "$GITHUB_OUTPUT"
 
       - name: Sign and upload the listed AMO version
         env:

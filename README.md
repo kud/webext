@@ -198,10 +198,11 @@ jobs:
     secrets: inherit
 ```
 
-Commit the version bump to main without a tag, then run it with that version.
-It refuses another branch, a version that is not the manifest's and an existing
-tag, and tags `<tag-prefix><version>` itself once the upload has succeeded. A
-bump tool that also tags (`git lzv`) makes it refuse, so push the bump alone.
+Commit the version bump to main, then run it with that version.
+It refuses another branch, a version that is not the manifest's and a
+`<tag-prefix><version>` tag on another commit. A tag already on the released
+commit (`git lzv` pushes one) is kept; otherwise it tags once the upload has
+succeeded.
 A `push: tags` caller still works and is not tagged again.
 
 Inputs: `root` (default `.`), `node-version`, `mode` (`auto`, `wxt`, `web-ext`),
