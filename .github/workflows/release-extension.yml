@@ -4,6 +4,15 @@ name: Release extension
 # artefacts to the GitHub release, then applies the AMO listing. The version is
 # the caller's business (git lzv, a repo script); nothing is bumped here.
 #
+# Two ways in, decided by the caller's event:
+# - workflow_dispatch (preferred): run on main with `version` set to the
+#   version already committed in the manifest. It refuses another branch, a
+#   mismatched version or a tag on another commit, signs, and only then tags
+#   the commit with the workflow's own token (unless that tag already points
+#   at it), so a failed upload leaves nothing behind.
+# - a pushed `<tag-prefix>*` tag (legacy, kept for callers not yet moved): the
+#   tag is already there, so nothing is tagged.
+#
 # Secrets come from the caller via `secrets: inherit`. WEB_EXT_API_KEY and
 # WEB_EXT_API_SECRET are used when present, MOZILLA_ADDONS_JWT_ISSUER and
 # MOZILLA_ADDONS_JWT_SECRET otherwise. The caller grants `contents: write`.
@@ -42,6 +51,14 @@ on:
         description: "128x128 icon PNG for the listing, relative to the repository root"
         type: string
         default: ""
+      version:
+        description: "workflow_dispatch only, required there: the version to release, which must equal the manifest's"
+        type: string
+        default: ""
+      tag-prefix:
+        description: "Prefix of the release tag; the tag is <tag-prefix><version>"
+        type: string
+        default: "v"
     secrets:
       WEB_EXT_API_KEY:
         required: false
@@ -65,6 +82,26 @@ jobs:
         working-directory: ${{ inputs.root }}
     steps:
       - uses: actions/checkout@v7
+
+      - name: Check the trigger
+        env:
+          EVENT: ${{ github.event_name }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          case "$EVENT" in
+            workflow_dispatch)
+              [ "$GITHUB_REF" = "refs/heads/main" ] || { echo "::error::Run the release from main, not $GITHUB_REF."; exit 1; }
+              [ -n "$VERSION" ] || { echo "::error::Pass the version to release."; exit 1; }
+              ;;
+            push)
+              case "$GITHUB_REF" in
+                refs/tags/*) ;;
+                *) echo "::error::A push releases only from a tag, not $GITHUB_REF."; exit 1 ;;
+              esac
+              ;;
+            *) echo "::error::Unsupported trigger '$EVENT'."; exit 1 ;;
+          esac
 
       - uses: actions/setup-node@v7
         with:
@@ -119,6 +156,44 @@ jobs:
           ' "$manifest")
           [ -n "$GUID" ] || { echo "::error::no gecko.id in $manifest"; exit 1; }
           echo "guid=$GUID" >> "$GITHUB_OUTPUT"
+          echo "manifest=$manifest" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve the release tag
+        id: tag
+        env:
+          EVENT: ${{ github.event_name }}
+          VERSION: ${{ inputs.version }}
+          PREFIX: ${{ inputs.tag-prefix }}
+          MANIFEST: ${{ steps.guid.outputs.manifest }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" != "workflow_dispatch" ]; then
+            echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+            echo "create=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # The signed manifest is the version AMO sees, so it is the one checked.
+          manifest_version=$(node -e '
+            process.stdout.write(require(require("path").resolve(process.argv[1])).version ?? "")
+          ' "$MANIFEST")
+          [ "$manifest_version" = "$VERSION" ] || { echo "::error::$MANIFEST is at '$manifest_version', not $VERSION. Commit the bump to main first."; exit 1; }
+          tag="$PREFIX$VERSION"
+          # The checkout is shallow and carries no tags: ask the remote. An
+          # annotated tag lists its commit on the peeled ^{} line.
+          refs=$(git ls-remote origin "refs/tags/$tag" "refs/tags/$tag^{}")
+          tagged=$(printf '%s\n' "$refs" | awk '$2 ~ /\^\{\}$/ {print $1}')
+          [ -n "$tagged" ] || tagged=$(printf '%s\n' "$refs" | awk 'NF {print $1; exit}')
+          if [ -z "$tagged" ]; then
+            echo "create=true" >> "$GITHUB_OUTPUT"
+          elif [ "$tagged" = "$GITHUB_SHA" ]; then
+            # A bump tool that tags as it pushes (git lzv) already made it.
+            echo "$tag already points at $GITHUB_SHA; releasing it as is."
+            echo "create=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::$tag points at $tagged, not the commit being released ($GITHUB_SHA). Bump the version first."
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
       - name: Sign and upload the listed AMO version
         env:
@@ -147,10 +222,20 @@ jobs:
           [ -n "$AMO_METADATA" ] && args+=(--amo-metadata "$AMO_METADATA")
           npx -y web-ext "${args[@]}"
 
+      # After the upload, not before: a failed sign leaves no tag to block the re-run.
+      - name: Tag the released commit
+        if: steps.tag.outputs.create == 'true'
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git tag "$TAG" "$GITHUB_SHA"
+          git push origin "refs/tags/$TAG"
+
       - name: Attach artefacts to the GitHub release
-        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.tag.outputs.tag }}
           generate_release_notes: true
           files: |
             ${{ inputs.root }}/web-ext-artifacts/*.xpi
